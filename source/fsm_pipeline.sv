@@ -1,72 +1,93 @@
 module fsm_pipeline(
-    input logic clk,
-    input logic nRST,              
-    input logic load_btn,
-    input logic start_btn,
-    input logic [15:0] switches,   
-    
-    output logic [3:0] A00, A01, A10, A11,
-    output logic [3:0] B00, B01, B10, B11,
-    output logic active,
-    output logic load_pulse_out
+	input logic clk, 
+	input logic nRST, 
+	input logic serial_data, 
+	input logic start,
+	//output logic ready,
+	output logic [3:0] A00, A01, A10, A11,
+	output logic [3:0] B00, B01, B10, B11,
+	output logic math_time,
+	output logic results
 );
-    typedef enum logic [1:0] {IDLE, LOAD_B, CALC} state_t;
-    state_t state, next_state;
 
-    // Internal Registers
-    logic [3:0] A00_r, A01_r, A10_r, A11_r;
-    logic [3:0] B00_r, B01_r, B10_r, B11_r;
+	//fresh variables yummer
+	logic reg_r;
+	logic [3:0] par_out;
+	logic done;
 
-    // Edge Detection
-    logic load_q1, load_q2, load_pulse;
-    logic start_q1, start_q2, start_pulse;
 
-    always_ff @(posedge clk, negedge nRST) begin
-        if(!nRST) begin
-            load_q1 <= 0; load_q2 <= 0;
-            start_q1 <= 0; start_q2 <= 0;
-        end else begin
-            load_q1 <= load_btn; load_q2 <= load_q1;
-            start_q1 <= start_btn; start_q2 <= start_q1;
-        end
-    end
-    assign load_pulse = load_q1 && !load_q2;
-    assign start_pulse = start_q1 && !start_q2;
-    assign load_pulse_out = load_pulse;
+	//calls to other modules to sync em up babay
+	sipo_shift_register shift (.sck(clk), .ss(nRST), .mosi(serial_data), .ready(start), .done(done), .pulse(reg_r), .parallel_out(par_out));
+	
+	assign math_time = (current_state == MULTIPLY); //tells top module that its time for the matrix math babay
+	//assign results = (current_state == OUTPUT);	//tells top module that the results are real shit babay
 
-    // State Machine & Datapath
-    always_ff @(posedge clk, negedge nRST) begin
-        if (!nRST) begin
-            state <= IDLE;
-            {A00_r, A01_r, A10_r, A11_r} <= '0;
-            {B00_r, B01_r, B10_r, B11_r} <= '0;
-        end else begin
-            state <= next_state;
-            if (load_pulse) begin
-                if (state == IDLE) begin
-                    {A00_r, A01_r, A10_r, A11_r} <= switches;
-                end else if (state == LOAD_B) begin
-                    {B00_r, B01_r, B10_r, B11_r} <= switches;
-                end
-            end
-        end
-    end
+	//States declaration for the fsm
+	typedef enum logic [3:0] {IDLE, PREP, READY, LOAD, SEND, CHANGE, MULTIPLY, REDUCE, ADD, OUTPUT} states;
+	states current_state, next_state;
+	logic [2:0] index, next_index;
+	
+	//state changer babay
+	always_ff @(posedge clk or negedge nRST) begin
+		if (!nRST) begin 
+			current_state <= IDLE;
+			index <= 3'd0;
+			results <= 1'b0;
+			done <= 0;
+			//start <= 0;
+		end else begin
+			current_state <= next_state;
+			index <= next_index;
+			//$display("State = %s", current_state.name());
+			//$display("index and par out = %d %b\n", index, par_out);
+			if (reg_r) begin
+				case (index)
+					0: A00 <= par_out;
+					1: A01 <= par_out;
+					2: A10 <= par_out;
+					3: A11 <= par_out;
+					4: B00 <= par_out;
+					5: B01 <= par_out;
+					6: B10 <= par_out;
+					7: B11 <= par_out;		
+				endcase
+			end 
+				
+		
+			results <= (current_state == OUTPUT);
+			//if (start) ready <= 1; //current_state == READY
+			if (current_state == CHANGE) done <= 1;
+		end
+	end
+	
+	//state logic babay
+	always_comb begin
+		next_state = current_state;
+		next_index = index;
+		case (current_state) 
+			IDLE : next_state = (start) ? READY : IDLE; //ready was prep but now it goes to the READY state when start goes high and when it goes to teh READY state
+			READY : begin //was PREP
+				next_index = 0;
+				next_state = LOAD;
+			end
+			//READY : next_state = LOAD;
+			LOAD : next_state = (reg_r) ? SEND : LOAD; //will go to SEND if the register is finished
+			SEND : begin 
+				next_index = (index == 7) ? index : index + 1;
+				next_state = (index == 7) ? CHANGE : LOAD;
+			end	
+			CHANGE : begin next_state = MULTIPLY; 
+				
+			end
+			//we love combinational logic keeps these 3 simple
+			MULTIPLY : next_state = REDUCE; 
+			REDUCE : next_state = ADD;
+			ADD : next_state = OUTPUT;
 
-    // Next State Logic
-    always_comb begin
-        next_state = state;
-        case (state)
-            IDLE:   if (load_pulse) next_state = LOAD_B;
-            LOAD_B: if (load_pulse) next_state = CALC;
-            CALC:   begin 
-                // Remains in CALC until Reset
-            end
-            default: next_state = IDLE; // Fix: Handle undefined states
-        endcase
-    end
-
-    assign A00 = A00_r; assign A01 = A01_r; assign A10 = A10_r; assign A11 = A11_r;
-    assign B00 = B00_r; assign B01 = B01_r; assign B10 = B10_r; assign B11 = B11_r;
-    assign active = (state == CALC) && start_btn; 
-
+			OUTPUT : begin next_state = (!nRST) ? IDLE : OUTPUT;
+				//results = 1;
+			end
+			default: next_state = IDLE;
+		endcase
+	end
 endmodule
