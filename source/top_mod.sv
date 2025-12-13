@@ -1,88 +1,96 @@
 module top_mod(
-    input logic clk,         
-    input logic nRST,        
-    input logic load_btn,    
-    input logic start_btn,   
-    input logic [15:0] pb_in, 
-    
-    // Outputs - CHANGED TO 8-BIT TO MATCH top.sv
-    output logic [7:0] hex0, hex1, hex2, hex3, hex4, hex5, hex6, hex7,
-    output logic done_led
-);
+	input logic clk,
+	input logic nRST,
+	input logic serial_in,
+	input logic start,
+	//output logic ready,
+	output logic serial_out,
+	output logic done,
+	output logic recieve
+); //these should be like wires or pins that connect to the microcontroller i am like 85% sure
 
-    // Signals
-    logic [15:0] input_val_toggled;
-    logic clear_inputs;
-    logic calc_active;
-    
-    // Matrix Signals
-    logic [3:0] A00, A01, A10, A11;
-    logic [3:0] B00, B01, B10, B11;
-    logic [7:0] C00, C01, C10, C11;
-    
-    // Display Mux
-    logic [7:0] d0, d1, d2, d3; 
-    
-    // Internal 7-bit segment wires (before adding Decimal Point)
-    logic [6:0] h0_seg, h1_seg, h2_seg, h3_seg, h4_seg, h5_seg, h6_seg, h7_seg;
+	logic math_r;
+	logic done_r;
+	logic results_r;
+	logic sending;
+	logic sending_r;
+	assign done = done_r;
+	logic buffer;
 
-    // --- 1. Toggle Bank ---
-    toggle_bank input_unit (
-        .clk(clk),
-        .nRST(nRST),             
-        .clear(clear_inputs),
-        .btn_raw(pb_in),
-        .data_out(input_val_toggled)
-    );
+	logic [3:0] A00, A01, A10, A11;
+	logic [3:0] B00, B01, B10, B11;
+	logic [7:0] C00, C01, C10, C11;
 
-    // --- 2. FSM Controller ---
-    fsm_pipeline ctrl (
-        .clk(clk),
-        .nRST(nRST),              
-        .load_btn(load_btn),
-        .start_btn(start_btn),
-        .switches(input_val_toggled),
-        .A00(A00), .A01(A01), .A10(A10), .A11(A11),
-        .B00(B00), .B01(B01), .B10(B10), .B11(B11),
-        .active(calc_active),
-        .load_pulse_out(clear_inputs)
-    );
+	//connects the fsm to the top
+	fsm_pipeline fsm (.clk(clk), .nRST(nRST), .serial_data(serial_in), .start(start), //.ready(ready), 
+		.A00(A00), .A01(A01), .A10(A10), .A11(A11), .B00(B00), .B01(B01), .B10(B10), .B11(B11), 
+		.math_time(math_r), .results(results_r)); //I don't think math_time actually is necessary but I'm keeping it anyways
+	//connects the math to the top
+	matmul multiplier (.A00(A00), .A01(A01), .A10(A10), .A11(A11), .B00(B00), .B01(B01), .B10(B10), .B11(B11),
+		.C00(C00), .C01(C01), .C10(C10), .C11(C11)); 
 
-    // --- 3. Matrix Multiplier ---
-    matmul multiplier (
-        .A00(A00), .A01(A01), .A10(A10), .A11(A11),
-        .B00(B00), .B01(B01), .B10(B10), .B11(B11),
-        .C00(C00), .C01(C01), .C10(C10), .C11(C11)
-    );
+	//we probably need to make a new serial out module to relay the output back to the microcontroller because we won't have enough pins depending on the method.
 
-    // --- 4. Display Logic ---
-    always_comb begin
-        if (calc_active) begin
-            d0 = C00; d1 = C01; d2 = C10; d3 = C11;
-        end else begin
-            d0 = {4'b0, input_val_toggled[3:0]};
-            d1 = {4'b0, input_val_toggled[7:4]};
-            d2 = {4'b0, input_val_toggled[11:8]};
-            d3 = {4'b0, input_val_toggled[15:12]};
-        end
-    end
+    // Serializer control
+	logic [7:0] shift_reg;    // current element to send
+	logic [2:0] bit_idx;      // bit position (0–7)
+	logic [1:0] mat_idx;      // which Cxx (0–3)
 
-    // Drivers: Connect 7-bit outputs to internal 7-bit wires
-    display_driver disp0 (.val_in(d3), .seg_tens(h7_seg), .seg_ones(h6_seg));
-    display_driver disp1 (.val_in(d2), .seg_tens(h5_seg), .seg_ones(h4_seg));
-    display_driver disp2 (.val_in(d1), .seg_tens(h3_seg), .seg_ones(h2_seg));
-    display_driver disp3 (.val_in(d0), .seg_tens(h1_seg), .seg_ones(h0_seg));
+	//initial $display("Value of Start: %d, %d, %d, %d", C00, C01, C10, C11);	
+	
+	always_ff @(posedge clk or negedge nRST) begin
+		//$display("\nserial_in, %b", serial_in);
+		//$display("Value of A: [%d, %d, %d, %d]", A00, A01, A10, A11);
+		//$display("Value of B: [%d, %d, %d, %d]", B00, B01, B10, B11);
+        	if (!nRST) begin
+			serial_out <= 0;
+		    	shift_reg <= 0;
+		    	bit_idx <= 0;
+		    	mat_idx <= 0;
+		    	sending <= 0;
+			done_r <= 0;
+			buffer <= 0;
+			//$display("Value of nRST: %d, %d, %d, %d", C00, C01, C10, C11);
+		end else begin
+			sending_r <= sending;
+			//$display("results_r and sending: %d, %d", results_r, sending);
+			if (results_r && !sending) begin
+			    	//start new transmission
+				mat_idx <= 0;
+				bit_idx <= 0;
+				sending <= 1;
+				done_r <= 0;
+				buffer <= 0;
+				//$display("Value of Begin: %d, %d, %d, %d", C00, C01, C10, C11);
+				//load first element (C00)
+				shift_reg <= C00;
+			end else if (sending) begin
+				//output MSB first
+				//$display("Value of Final: %d, %d, %d, %d", C00, C01, C10, C11);
+				serial_out <= shift_reg[7];
+				if (bit_idx == 3'd7) begin
+					bit_idx <= 0;
+					mat_idx <= mat_idx + 1;
+					case (mat_idx)
+						0: shift_reg <= C01;
+						1: shift_reg <= C10;
+						2: shift_reg <= C11;
+						default: begin
+					    		sending <= 0; //all 4 sent
+							buffer <= 1; //done_r <= 1;
+			        		end
+			    		endcase
+				end else begin
+					shift_reg <= {shift_reg[6:0], 1'b0};
+					bit_idx <= bit_idx + 1;
+				end
+		    	end
+			if (buffer) begin done_r <= 1;
+				buffer <= 0;
+			end
+		end
+	end
 
-    // Assign 8-bit outputs (Append 1'b1 to turn OFF decimal point for common anode)
-    assign hex7 = {1'b1, h7_seg};
-    assign hex6 = {1'b1, h6_seg};
-    assign hex5 = {1'b1, h5_seg};
-    assign hex4 = {1'b1, h4_seg};
-    assign hex3 = {1'b1, h3_seg};
-    assign hex2 = {1'b1, h2_seg};
-    assign hex1 = {1'b1, h1_seg};
-    assign hex0 = {1'b1, h0_seg};
-
-    assign done_led = calc_active;
+	assign recieve = sending_r;
 
 endmodule
