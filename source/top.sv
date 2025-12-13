@@ -28,6 +28,6 @@ module top (
 	output logic recieve
 	*/
 
-	top_mod inst0 (.clk(hz100), .nRST(reset), .load_btn(pb[18]), .start_btn(pb[19]), .pb_in(pb[15:0]), .hex0(ss0), .hex1(ss1), .hex2(ss2), .hex3(ss3), .hex4(ss4), .hex5(ss5), .hex6(ss6), .hex7(ss7), .done(red), ) 
+	top_mod inst0 (.clk(hz100), .nRST(reset), .load_btn(pb[18]), .start_btn(pb[19]), .pb_in(pb[15:0]), .hex0(ss0), .hex1(ss1), .hex2(ss2), .hex3(ss3), .hex4(ss4), .hex5(ss5), .hex6(ss6), .hex7(ss7), .done_led(red));
 
 endmodule

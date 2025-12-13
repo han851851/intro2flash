@@ -8,9 +8,11 @@ module display_driver (
     logic [3:0] ones;
 
     // 1. Binary to BCD Conversion
-    // Since your max product is 81 (9x9), simple math works fine here.
-    assign tens = (val_in / 10) % 10;
-    assign ones = val_in % 10;
+    // Fix: Explicitly cast 'val_in' to 32 bits (integer width) for the math operators
+    // 32'(val_in) tells Verilator "Yes, I know this needs to be 32 bits."
+    // 4'(...) tells Verilator "Now chop the result back down to 4 bits."
+    assign tens = 4'((32'(val_in) / 10) % 10);
+    assign ones = 4'(32'(val_in) % 10);
 
     // 2. Instantiate 7-Segment Decoders
     seven_seg tens_decoder (
@@ -30,10 +32,7 @@ module seven_seg (
     input  logic [3:0] bcd,
     output logic [6:0] seg
 );
-    // Standard 7-Segment Map
-    // Adjust 0 vs 1 depending on if your board is Common Anode or Cathode.
-    // This mapping assumes 0 = ON (Common Anode), which is standard for many FPGA boards.
-    // If your segments remain dark, invert these bits (replace 0 with 1).
+    // Standard 7-Segment Map (0 = ON for Common Anode)
     always_comb begin
         case(bcd)
             //                  gfedcba
